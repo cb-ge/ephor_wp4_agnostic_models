@@ -8,9 +8,9 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
-setwd("/Users/cbge/OneDrive - Universiteit Utrecht/EPHOR/Task4.2.3")
+setwd("/EPHOR/Task4.2.3")
 getwd()
-output.path <-"/Users/cbge/OneDrive - Universiteit Utrecht/EPHOR/Task4.2.3/Rdata/"
+output.path <-"/EPHOR/Task4.2.3/Rdata/"
 
 library(stabs)
 library(glmnet)
