@@ -1,0 +1,356 @@
+---
+title: "Ephor_4.2.3_agnostic_models"
+author: "Calvin Ge"
+date: "18/02/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+setwd("/Users/cbge/OneDrive - Universiteit Utrecht/EPHOR/Task4.2.3")
+getwd()
+output.path <-"/Users/cbge/OneDrive - Universiteit Utrecht/EPHOR/Task4.2.3/Rdata/"
+
+library(stabs)
+library(glmnet)
+library(tictoc)
+library(EValue)
+library(brms)
+library(bayesplot)
+library(tidybayes)
+library(tidyverse)
+library(ggridges)
+library(dplyr)
+library(metafor)
+library(lme4)
+library(merTools)
+
+```
+
+```{r file loading, include=FALSE}
+
+#load(file=paste0(output.path,"final.subjects.agnostic4.3d copy.Rdata")) #17:347 are duration variables, 348:659 are dc variables, for penalization model
+
+#load(file=paste0(output.path,"final.subjects.longest.job copy.Rdata")) # file with 3d duration and dc, plus longest held job and longest held years
+
+#load(file=paste0(output.path,"final.subjects.exposome6.Rdata")) #cleaned 4-digit penalization model file
+
+```
+
+```{r data matrix prepartion - load and start from here, include=FALSE}
+
+load(file=paste0(output.path,"final.subjects.agnostic4.3d copy.Rdata")) #17:347 are duration variables, 348:659 are dc variables, for penalization model
+
+
+all.subjects.isco<-all.subjects.agnostic
+
+is.factor(all.subjects.isco$isco3_011_dc)
+table(all.subjects.isco$isco3_011_dc)
+
+for(i in c(348:659)){
+  all.subjects.isco[,i]<-as.factor(all.subjects.isco[,i]) 
+}
+is.factor(all.subjects.isco$isco3_011_dc)
+
+levels(all.subjects.isco$study_name)<-1:20
+table(all.subjects.isco$study_name)
+table(all.subjects.agnostic$study_name)
+
+all.subjects.isco$A<-as.factor(all.subjects.isco$A)
+all.subjects.isco$A[is.na(all.subjects.isco$A)]<-0 #ran a check and all were non-jobs
+anyNA(all.subjects.isco$A)
+table(all.subjects.isco$A)
+all.subjects.isco$sex<-as.factor(all.subjects.isco$sex)
+
+
+x.all<-all.subjects.isco[,c(2,6:659)] #employment duration + dc variables
+x.dur<-all.subjects.isco[,c(2,6:347)] #duration only
+x.dc<-all.subjects.isco[,c(2,6:16,348:659)] #duration only
+
+#x.mat<-as.matrix(x.all)
+#x.mat<-as.matrix(x.dur)
+#x.mat<-as.matrix(x.dc)
+y<-as.factor(all.subjects.isco[,4])
+```
+
+##Penalization model with dichotomous (dc) variables
+
+```{r Penalization model with dichotomous (dc) variables, include=TRUE}
+
+table(y) #status - 16901 cases; 20965 controls
+head(names(x.dc),25) #324 variables, 1:12 are "must have" variables, rest ever employment in 3d isco68 occ
+
+set.seed(1234)
+
+x.mat<-as.matrix(x.dc)
+
+pfac=rep(1,324)
+pfac[c(1:12)]=0
+
+dc.model1 <- stabsel(x = x.mat, y = y, fitfun = glmnet.lasso, args.fitfun = list(type = "anticonservative", penalty.factor = pfac, family = "binomial"), cutoff = 0.75, PFER = 10) 
+
+dc.model1$selected
+
+
+
+```
+
+```{r Other penalization settings, include=F}
+
+x.dc<-x.dc[,-5] #remost list A jobs
+x.mat<-as.matrix(x.dc)
+
+pfac=rep(1,323)
+pfac[c(1:11)]=0
+
+dc.model2 <- stabsel(x = x.mat, y = y, fitfun = glmnet.lasso, args.fitfun = list(type = "anticonservative", penalty.factor = pfac, family = "binomial"), cutoff = 0.75, PFER = 10) 
+
+dc.model2$selected
+
+dc.model3 <- stabsel(x = x.mat, y = y, fitfun = glmnet.lasso, args.fitfun = list(type = "anticonservative", penalty.factor = pfac, family = "binomial"), cutoff = 0.75, PFER = 5) 
+
+dc.model3$selected
+
+dc.model4 <- stabsel(x = x.mat, y = y, fitfun = glmnet.lasso, args.fitfun = list(type = "anticonservative", penalty.factor = pfac, family = "binomial"), cutoff = 0.75, PFER = 2) 
+
+dc.model4$selected
+```
+
+```{r Logistic regression with selected variables, include=TRUE, message=FALSE}
+model1_var<-c("status", names(dc.model1$selected))
+model1.selected<-all.subjects.isco[model1_var]
+selected.data<-model1.selected
+
+stabs1<-glm(status~., data = selected.data, family = binomial)
+
+AIC(stabs1) 
+
+summary(stabs1)
+
+stabs1.or<-round(exp(cbind(summary(stabs1)$coefficients[36:54,1],confint(stabs1)[36:54,])),3)
+stabs1.or
+```
+
+
+```{r Case number for job groups, include=F}
+table(all.subjects.isco[all.subjects.isco$isco3_027_dc==1,]$status) #2
+table(all.subjects.isco[all.subjects.isco$isco3_072_dc==1,]$status) #83
+table(all.subjects.isco[all.subjects.isco$isco3_083_dc==1,]$status) #16
+table(all.subjects.isco[all.subjects.isco$isco3_132_dc==1,]$status) #231
+table(all.subjects.isco[all.subjects.isco$isco3_193_dc==1,]$status) #69
+table(all.subjects.isco[all.subjects.isco$isco3_212_dc==1,]$status) #190
+table(all.subjects.isco[all.subjects.isco$isco3_310_dc==1,]$status) #565
+table(all.subjects.isco[all.subjects.isco$isco3_331_dc==1,]$status) #624
+table(all.subjects.isco[all.subjects.isco$isco3_393_dc==1,]$status) #1198
+table(all.subjects.isco[all.subjects.isco$isco3_951_dc==1,]$status) #831
+table(all.subjects.isco[all.subjects.isco$isco3_954_dc==1,]$status) #535
+table(all.subjects.isco[all.subjects.isco$isco3_999_dc==1,]$status) #1466
+table(all.subjects.isco[all.subjects.isco$isco3_AA5_dc==1,]$status) #630
+
+```
+
+```{r E-values for select OR results, include=TRUE}
+
+evalues.OR(1.289,1.118,1.486,rare = TRUE) #for isco-954 carpenters
+evalues.OR(1.413,1.238,1.615,rare = TRUE) #for isco-951 bricklayers
+
+```
+
+An E-value for unmeasured confounding is minimum strength of association, on the risk ratio scale, that an unmeasured confounder would need to have with both the treatment and the outcome to fully explain away a specific treatment–outcome association, conditional on the measured covariates.
+
+Example with radon as confounder: suppose radon exposure increase the OR of lung cancer by 2, and suppose "ever carpenters" are two times more likely to be exposed to radon than "never carpenters", than the observed effect on carpenters could be explained away by confounding by radon. This works with one confounder or multiple confounders, as long as their combined effect is similar. 
+
+Thoughts?
+
+```{r prep for Penalization model 5-digits, include=F}
+
+load(file=paste0(output.path,"final.subjects.exposome5 copy.Rdata"))
+
+all.subjects.isco4<-all.subjects[,c(which(colnames(all.subjects)=="subjctid"),101:2706)]
+all.subjects.exp<-all.subjects.isco[,c(1:16)]
+all.subjects.isco4$subjctid<-sub("^0+([0-9]*)$", "\\1", all.subjects.isco4$subjctid) #get rid of leading zero
+all.subjects.isco4<-merge(all.subjects.exp,all.subjects.isco4, by = "subjctid")
+all.subjects.isco<-all.subjects.isco4
+
+is.factor(all.subjects.isco$isco_01100_dc)
+which(colnames(all.subjects.isco)=="isco_01100_dc") #dc starts at col 1314
+
+for(i in c(1320:2622)){
+  all.subjects.isco[,i]<-as.factor(all.subjects.isco[,i]) 
+}
+
+is.factor(all.subjects.isco$isco_01100_dc)
+
+levels(all.subjects.isco$study_name)<-1:20
+table(all.subjects.isco$study_name)
+
+all.subjects.isco$A<-as.factor(all.subjects.isco$A)
+all.subjects.isco$A[is.na(all.subjects.isco$A)]<-0 #ran a check and all were non-jobs
+anyNA(all.subjects.isco$A)
+table(all.subjects.isco$A)
+all.subjects.isco$sex<-as.factor(all.subjects.isco$sex)
+
+# save(all.subjects.isco,file=paste0(output.path,"final.subjects.exposome6.Rdata")) #cleaned 4-digit file
+
+#x<-all.subjects.isco[,c(2,6:2622)] #employment duration + dc variables
+x<-all.subjects.isco[,c(which(colnames(all.subjects.isco)=="sex"),
+                      which(colnames(all.subjects.isco)=="study_name"),
+                      which(colnames(all.subjects.isco)=="packyrs"),
+                      which(colnames(all.subjects.isco)=="time_quit"),
+                      which(colnames(all.subjects.isco)=="agegroup"),
+                      which(colnames(all.subjects.isco)=="A"),
+                      which(colnames(all.subjects.isco)=="silica.cumexposure.lag0"),
+                      which(colnames(all.subjects.isco)=="asbestos.cumexposure.lag0"),
+                      which(colnames(all.subjects.isco)=="dme.cumexposure.lag0"),
+                      which(colnames(all.subjects.isco)=="pah.cumexposure.lag0"),
+                      which(colnames(all.subjects.isco)=="nickel.cumexposure.lag0"),
+                      which(colnames(all.subjects.isco)=="chromium.cumexposure.lag0"),
+  1320:2622)] #dichotomous only
+
+x.mat<-as.matrix(x)
+y<-as.factor(all.subjects.isco[,4])
+```
+
+
+```{r 4-digit penalization model, include=FALSE}
+table(y) #status - 16901 cases; 20965 controls
+head(names(x),25) #1315 variables, 1:12 are "must have" variables, rest ever employment in 4d isco68 occ
+
+set.seed(1234)
+
+pfac=rep(1,1315)
+pfac[c(1:12)]=0
+
+dc.model1_4d <- stabsel(x = x.mat, y = y, fitfun = glmnet.lasso, args.fitfun = list(type = "anticonservative", penalty.factor = pfac, family = "binomial"), cutoff = 0.75, PFER = 10) 
+
+dc.model1_4d$selected
+```
+
+```{r Logistic regression with selected variables - 4d, include=F, message=FALSE}
+model1.4_var<-c("status", names(dc.model1_4d$selected))
+model1.4.selected<-all.subjects.isco[model1.4_var]
+selected.data<-model1.4.selected
+
+stabs1.4<-glm(status~., data = selected.data, family = binomial)
+
+AIC(stabs1.4) 
+
+summary(stabs1.4)
+
+stabs1.4or<-round(exp(cbind(summary(stabs1.4)$coefficients[36:57,1],confint(stabs1.4)[36:57,])),3)
+stabs1.4or
+```
+
+```{r Case number for job groups - 5d, include=F}
+table(all.subjects.isco[all.subjects.isco$isco_02410_dc==1,]$status) #
+table(all.subjects.isco[all.subjects.isco$isco_03550_dc==1,]$status) #
+table(all.subjects.isco[all.subjects.isco$isco_07210_dc==1,]$status) #
+table(all.subjects.isco[all.subjects.isco$isco_08310_dc==1,]$status) #
+table(all.subjects.isco[all.subjects.isco$isco_13215_dc==1,]$status) #
+table(all.subjects.isco[all.subjects.isco$isco_13290_dc==1,]$status) #
+table(all.subjects.isco[all.subjects.isco$isco_19390_dc==1,]$status) #
+table(all.subjects.isco[all.subjects.isco$isco_21210_dc==1,]$status) #
+table(all.subjects.isco[all.subjects.isco$isco_31010_dc==1,]$status) #
+table(all.subjects.isco[all.subjects.isco$isco_39310_dc==1,]$status) #
+table(all.subjects.isco[all.subjects.isco$isco_43130_dc==1,]$status) #
+table(all.subjects.isco[all.subjects.isco$isco_83290_dc==1,]$status) #
+table(all.subjects.isco[all.subjects.isco$isco_95120_dc==1,]$status) #
+table(all.subjects.isco[all.subjects.isco$isco_95160_dc==1,]$status) #
+table(all.subjects.isco[all.subjects.isco$isco_95410_dc==1,]$status) #
+table(all.subjects.isco[all.subjects.isco$isco_97155_dc==1,]$status) #
+```
+
+```{r prep for Bayesian model, include=FALSE}
+
+load(file=paste0(output.path,"final.subjects.longest.job copy.Rdata")) # file with 3d duration and dc, plus longest held job and longest held years
+
+all.subjects.bayesian<-all.subjects.isco[c(1:16,661)] #core plus longest_job
+
+all.subjects.bayesian$A<-as.factor(all.subjects.bayesian$A)
+all.subjects.bayesian$A[is.na(all.subjects.bayesian$A)]<-0 #ran a check and all were non-jobs
+anyNA(all.subjects.bayesian)
+
+fixed.model<-glm(
+  status ~ factor(sex) + factor(study_name)  + packyrs + factor(time_quit) + factor(A) + factor(agegroup) + dme.cumexposure.lag0 + silica.cumexposure.lag0 + asbestos.cumexposure.lag0 + chromium.cumexposure.lag0 + nickel.cumexposure.lag0 + pah.cumexposure.lag0,
+  data = all.subjects.bayesian,
+  family = binomial
+)
+
+summary(fixed.model)
+
+#Testing combined exposure metric
+
+all.subjects.bayesian$combined.cumexposure<-all.subjects.bayesian$dme.cumexposure.lag0*fixed.model$coef["dme.cumexposure.lag0"] + all.subjects.bayesian$silica.cumexposure.lag0*fixed.model$coef["silica.cumexposure.lag0"] + all.subjects.bayesian$asbestos.cumexposure.lag0*fixed.model$coef["asbestos.cumexposure.lag0"]  + all.subjects.bayesian$chromium.cumexposure.lag0*fixed.model$coef["chromium.cumexposure.lag0"] + all.subjects.bayesian$nickel.cumexposure.lag0*fixed.model$coef["nickel.cumexposure.lag0"] +  all.subjects.bayesian$pah.cumexposure.lag0*fixed.model$coef["pah.cumexposure.lag0"] #making a combined exposure field weighted by beta
+
+fixed.model2<-glm(
+  status ~ factor(sex) + factor(study_name)  + packyrs + factor(time_quit) + factor(A) + factor(agegroup) + combined.cumexposure,
+  data = all.subjects.bayesian,
+  family = binomial
+)
+
+fixed.model2$coef["combined.cumexposure"] # it's 1.00000, kind of strange but quite close to combined beta from 6 exposures of 1.015291
+
+summary(fixed.model2)
+
+```
+
+##Bayesian hierarchical model
+
+```{r Bayesian hierarchical model tests, include=TRUE, message=FALSE}
+
+selected.data<-all.subjects.bayesian
+
+names(selected.data)[4]<-"y" #status
+selected.data$longest_job<-as.factor(selected.data$longest_job)
+
+if(FALSE){
+
+bayes_m1<-brm(y ~ combined.cumexposure + (1|longest_job), data=selected.data, family=bernoulli, chains = 2, iter = 1000, warmup = 500) #combined exposure is a weighted sum of all 6 exposures - weights applied are their respective betas obtained from logistic model with all fixed effects
+
+summary(bayes_m1)
+plot(bayes_m1) #traceplots and posterior densities 
+post<-posterior_samples(bayes_m1, add_chain = TRUE)
+mcmc_acf(post, pars = c("b_Intercept", "sd_longest_job__Intercept"), lags = 10) #autocorrelation
+m1_random<-as.data.frame(ranef(bayes_m1)) #random effect estimates
+m1_random<-m1_random[order(-m1_random$longest_job.Q2.5.Intercept),]
+head(m1_random,10)
+
+bayes_m2<-brm(y ~ combined.cumexposure + packyrs + (1|longest_job), data=selected.data, family=bernoulli, chains = 2, iter = 1000, warmup = 500) 
+plot(bayes_m2) #traceplots and posterior densities 
+post2<-posterior_samples(bayes_m2, add_chain = TRUE)
+mcmc_acf(post2, pars = c("b_Intercept", "sd_longest_job__Intercept"), lags = 10) 
+m2_random<-as.data.frame(ranef(bayes_m2))
+m2_random<-m2_random[order(-m2_random$longest_job.Q2.5.Intercept),]
+head(m2_random,10)
+
+bayes_m3<-brm(y ~ agegroup + sex + study_name + packyrs + combined.cumexposure + (1|longest_job), data=selected.data, family=bernoulli, chains = 2, iter = 1000, warmup = 500) 
+plot(bayes_m3) #traceplots and posterior densities 
+post3<-posterior_samples(bayes_m3, add_chain = TRUE)
+mcmc_acf(post3, pars = c("b_Intercept", "sd_longest_job__Intercept"), lags = 10) 
+m3_random<-as.data.frame(ranef(bayes_m3))
+m3_random<-m3_random[order(-m3_random$longest_job.Q2.5.Intercept),]
+head(m3_random,10)
+
+}## End(Not run - testing simpler models)
+
+bayes_m4<-brm(y ~ agegroup + sex + study_name + packyrs + time_quit + combined.cumexposure + (1|longest_job), data=selected.data, family=bernoulli, chains = 2, iter = 2000, warmup = 1000) 
+plot(bayes_m4) #traceplots and posterior densities 
+post4<-posterior_samples(bayes_m4, add_chain = TRUE)
+mcmc_acf(post4, pars = c("b_Intercept", "sd_longest_job__Intercept"), lags = 10) 
+m4_random<-as.data.frame(ranef(bayes_m4))
+m4_random<-m4_random[order(-m4_random$longest_job.Q2.5.Intercept),]
+head(m4_random,10)
+# save(bayes_m4,file=paste0(output.path,"bayes_m4.Rdata")) 
+```
+
+Thoughts? Possible to do this with ever employment? 
+
+```{r Frequentist mixed model, include=FALSE}
+
+isco_mixed<-glmer(y ~ agegroup + sex + study_name + packyrs + time_quit + combined.cumexposure + (1|longest_job),data=selected.data, family=binomial)
+freq_mixed<-REsim(isco_mixed) 
+plotREsim(freq_mixed) 
+
+```
+
