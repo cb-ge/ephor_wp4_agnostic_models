@@ -1,0 +1,655 @@
+---
+title: "Agnostic_pop_prep"
+author: "Calvin Ge"
+date: "24/03/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+library(fastDummies)
+library(stabs)
+library(glmnet)
+
+
+setwd("/Users/cbge/OneDrive - Universiteit Utrecht/EPHOR/Task4.2.3")
+getwd()
+output.path <-"/Users/cbge/OneDrive - Universiteit Utrecht/EPHOR/Task4.2.3/Rdata/"
+
+
+
+```
+
+```{r latest files}
+
+load(file=paste0(output.path,"all.subjects.ever6.Rdata")) #ever job dataset, full
+
+load(file=paste0(output.path,"all.subjects.ever5.Rdata")) #ever job dataset, with teachers as ref
+
+load(file=paste0(output.path,"all.subjects.longestjob_3d5d.Rdata")) #longest 3/5d job dataset
+```
+
+
+```{r making ever isco variables 3d/5d}
+
+load(file="/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/synergy_master_occ_hist_20210322.Rdata") #master occ.hist file
+#occ.hist<-read.csv(file="/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/syn_all_occ_hist.txt",sep="\t") # all jobs master text file 
+
+occ.hist$subjctid<-sub("^0+([0-9]*)$", "\\1", occ.hist$subjctid) #get rid of leading zero
+occ.hist$subjctid<-relevel(factor(occ.hist$subjctid),ref="101031026")
+sum(occ.hist$isco==100000) #armed forces (NOT conscription) = 14479
+occ.hist$isco[occ.hist$isco==100000]<-66666 #change military to a unique code that's not ambiguous for 2/3/5 digit
+sum(occ.hist$isco==66666) #armed forces (NOT conscription) = 14479
+occ.hist$isco3 <- floor(occ.hist$isco/100)
+
+
+occ.hist$yearcount<-1
+
+tmp1<-aggregate(occ.hist$yearcount,by=list(occ.hist$subjctid,occ.hist$isco3),FUN=sum)
+    table(tmp1$x) #this seems reasonable for employment duration, max=73
+    length(unique(tmp1$Group.1)) #37604 unique subjects here
+    
+tmp2<-aggregate(occ.hist$yearcount,by=list(occ.hist$subjctid,occ.hist$isco),FUN=sum)
+    table(tmp2$x) #this seems reasonable for employment duration, max=73
+    length(unique(tmp2$Group.1)) #37604 unique subjects here
+
+names(tmp1)<-c("subjctid","isco3","jobdur")
+names(tmp2)<-c("subjctid","isco","jobdur")
+
+occ.hist.expand3<-dummy_cols(tmp1, select_columns = "isco3")
+occ.hist.expand<-dummy_cols(tmp2, select_columns = "isco") #takes a while, load from below if poss.
+
+
+for(i in c(4:330)){
+  occ.hist.expand3[,i]<-ifelse(occ.hist.expand3[,i]==1, occ.hist.expand3$jobdur, 0)
+}
+
+for(i in c(4:1703)){
+  occ.hist.expand[,i]<-ifelse(occ.hist.expand[,i]==1, occ.hist.expand$jobdur, 0)
+}
+
+table(occ.hist.expand3$isco3_666) 
+table(occ.hist.expand$isco_66666) 
+
+load(file="/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/synergy_master_file_20210322.Rdata") #master all.subjects file
+
+all.subjects.master<-all.subjects
+
+load(file="/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/Diesel_paper/Rdata/final.subjects.CG4.Rdata") #diesel estimates from diesel paper file
+
+all.subjects$subjctid<-sub("^0+([0-9]*)$", "\\1", all.subjects$subjctid) #get rid of leading zero
+all.subjects$subjctid<-relevel(factor(all.subjects$subjctid),ref="101031026")
+all.subjects<-merge(all.subjects.master,all.subjects[,c("subjctid","dme.cumexposure.lag0")], by="subjctid", all.x = T)
+
+all.subjects.master<-NULL
+all.subjects$diesel_cum0<-all.subjects$dme.cumexposure.lag0
+anyNA(all.subjects$diesel_cum0)
+all.subjects$dme.cumexposure.lag0<-NULL
+
+for(i in c(4:330)){
+  tmp<-aggregate(occ.hist.expand3[,i], by=list(occ.hist.expand3$subjctid), FUN=sum)
+  names(tmp)<-c("subjctid", names(occ.hist.expand3[i]))
+  all.subjects<-merge(all.subjects,tmp,by = "subjctid", all.x = T)
+} #takes a while. load from save below
+
+save(all.subjects,file=paste0(output.path,"all.subjects.expanded1.Rdata"))
+
+for(i in c(4:1703)){
+  tmp<-aggregate(occ.hist.expand[,i], by=list(occ.hist.expand$subjctid), FUN=sum)
+  names(tmp)<-c("subjctid", names(occ.hist.expand[i]))
+  all.subjects<-merge(all.subjects,tmp,by = "subjctid", all.x = T)
+} #takes a while. load from save below
+
+save(all.subjects,file=paste0(output.path,"all.subjects.expanded.Rdata")) #559 is the start of the 5d jobs
+
+```
+
+```{r adding ever isco fields}
+
+load(file=paste0(output.path,"all.subjects.expanded.Rdata"))
+
+which(colnames(all.subjects)=="isco3_10") #232 is position of first 3d job
+which(colnames(all.subjects)=="isco_1000") #559 is position of first 5d job
+
+tmp<-all.subjects[,c(232:558)] #3d jobs
+
+for(i in c(1:327)){
+  tmp[,i]<-ifelse(tmp[,i]>0,1,0)
+  #all.subjects2[,i]<-as.factor(all.subjects2[,i]) #maybe there is benefit in making this happen later so i can count the instances
+  names(tmp)[i]<-paste(names(tmp)[i], "ever", sep = "_")
+}
+
+tmp1<-all.subjects[,c(559:2258)]
+
+for(i in c(1:1700)){
+  tmp1[,i]<-ifelse(tmp1[,i]>0,1,0)
+  #all.subjects2[,i]<-as.factor(all.subjects2[,i]) #maybe there is benefit in making this happen later so i can count the instances
+  names(tmp1)[i]<-paste(names(tmp1)[i], "ever", sep = "_")
+}
+
+all.subjects<-cbind(all.subjects,tmp)
+all.subjects<-cbind(all.subjects,tmp1)
+
+tail(names(all.subjects))
+
+save(all.subjects,file=paste0(output.path,"all.subjects.ever.Rdata")) 
+
+```
+
+```{r longest jobs in 3d and 5d}
+
+load(file=paste0(output.path,"all.subjects.ever.Rdata"))
+
+which(colnames(all.subjects)=="isco3_10") #232 is position of first 3d job
+which(colnames(all.subjects)=="isco3_999")
+which(colnames(all.subjects)=="isco_1000") #559 is position of first 5d job
+which(colnames(all.subjects)=="isco_99910") #2258 is position for end
+
+table(all.subjects$isco3_666) #35872 = 0, range from 0-47
+for(i in c(which(colnames(all.subjects)=="isco3_10"):which(colnames(all.subjects)=="isco_99910"))){
+  all.subjects[,i]<-ifelse(all.subjects[,i]>4,all.subjects[,i],0) #keeping duration for jobs >4 years
+}
+
+#subjects with duration = 0 across all jobs in 3d and 5d? 
+
+all.subjects$zero_dur3<-rowSums(all.subjects[,c(which(colnames(all.subjects)=="isco3_10"):which(colnames(all.subjects)=="isco3_999"))])
+table(all.subjects$zero_dur3) #491 0s
+all.subjects$isco3_xxx<-ifelse(all.subjects$zero_dur3==0,5,0) #making a new job group 
+table(all.subjects$isco3_xxx)
+all.subjects$zero_dur3<-NULL
+  
+all.subjects$zero_dur5<-rowSums(all.subjects[,c(which(colnames(all.subjects)=="isco_1000"):which(colnames(all.subjects)=="isco_99910"))])
+table(all.subjects$zero_dur5) #523 0s
+all.subjects$isco_xxxxx<-ifelse(all.subjects$zero_dur5==0,5,0) #making a new job group 
+table(all.subjects$isco_xxxxx)
+all.subjects$zero_dur5<-NULL
+
+table(all.subjects$isco3_666) #36289 = 0, range from 5-47
+
+which(colnames(all.subjects)=="isco3_xxx")
+which(colnames(all.subjects)=="isco_xxxxx") #559 
+all.subjects<-all.subjects[,c(1:231,4286,232:558,4287,559:2558)] #taking only duration lines
+
+dur3<-all.subjects[,c(which(colnames(all.subjects)=="isco3_xxx"):which(colnames(all.subjects)=="isco3_999"))]
+
+#max duration
+all.subjects$max_dur3<-apply(X = dur3,MARGIN = 1,FUN = max)
+table(all.subjects$max_dur3) #longest is 73 years, OK. there are 491 0s, probably need to remove these
+
+dur5<-all.subjects[,c(which(colnames(all.subjects)=="isco_xxxxx"):which(colnames(all.subjects)=="isco_99910"))]
+
+#max duration
+all.subjects$max_dur5<-apply(X = dur5,MARGIN = 1,FUN = max)
+table(all.subjects$max_dur5) #longest is 73 years, OK.
+
+
+table(is.na(all.subjects$max_dur3)) #262 here, have to remove these
+
+all.subjects2<-all.subjects2[!is.na(all.subjects2$max_dur3),] #37604 here
+
+table(all.subjects2$max_dur5) 
+
+#longest held job
+
+dur3<-all.subjects2[,c(which(colnames(all.subjects2)=="isco3_xxx"):which(colnames(all.subjects2)=="isco3_999"))]
+all.subjects2$longest_job3<-colnames(dur3)[max.col(dur3,ties.method="last")] #taking higher isco value if tie
+table(all.subjects2$longest_job3)
+
+dur5<-all.subjects2[,c(which(colnames(all.subjects2)=="isco_xxxxx"):which(colnames(all.subjects2)=="isco_99910"))]
+all.subjects2$longest_job5<-colnames(dur5)[max.col(dur5,ties.method="last")]
+table(all.subjects2$longest_job5) #lower n/job here naturally
+
+all.subjects2<-all.subjects2[,c("subjctid",
+                                "status",
+                                "sex",
+                                "study_name",
+                                "agegroup",
+                                "packyrs",
+                                "time_quit",
+                                "asbestos_cum0",
+                                "chromium_cum0",
+                                "diesel_cum0",
+                                "nickel_cum0",
+                                "pah_cum0",
+                                "silica_cum0",
+                                "longest_job3",
+                                "longest_job5")] # 37081obs, 15 variables
+
+
+anyNA(all.subjects2) #F
+
+levels(all.subjects2$study_name)<-1:20
+table(all.subjects2$study_name)
+all.subjects2$sex<-as.factor(all.subjects2$sex)
+all.subjects2$status<-as.factor(all.subjects2$status)
+all.subjects2$longest_job3<-as.factor(all.subjects2$longest_job3)
+all.subjects2$longest_job5<-as.factor(all.subjects2$longest_job5)
+
+all.subjects<-all.subjects2
+
+save(all.subjects,file=paste0(output.path,"all.subjects.longestjob_3d5d.Rdata"))  #this is the file with longest jobs 
+```
+
+```{r remove jobs with less than 5 total ever subjects}
+
+load(file=paste0(output.path,"all.subjects.ever.Rdata"))
+
+table(is.na(all.subjects$isco3_10)) #262 na's
+
+all.subjects<-all.subjects[!is.na(all.subjects$isco3_10),] #37604 subjects left
+
+all.subjects<-all.subjects[,c(1:22,
+  which(colnames(all.subjects)=="isco3_10_ever"):which(colnames(all.subjects)=="isco_99910_ever"))] #keeping only ever columns
+
+isco5_sum<-colSums(all.subjects[,c(which(colnames(all.subjects)=="isco_1000_ever"):which(colnames(all.subjects)=="isco_99910_ever"))])
+isco5_sum<-as.data.frame(isco5_sum)
+isco5_sum<-setDT(isco5_sum, keep.rownames = T)
+names(isco5_sum)<-c("isco","ever")
+isco5_sum$exclude<-ifelse(isco5_sum$ever<5,1,0)
+table(isco5_sum$exclude) #388 excluded jobs here 
+table(isco5_sum$isco[isco5_sum$exclude>0])
+
+excl.var<-isco5_sum$isco[isco5_sum$exclude>0]
+all.subjects<-all.subjects[,-which(names(all.subjects) %in% excl.var)] #1661 variables left
+
+isco3_sum<-colSums(all.subjects[,c(which(colnames(all.subjects)=="isco3_10_ever"):which(colnames(all.subjects)=="isco3_999_ever"))])
+isco3_sum<-as.data.frame(isco3_sum)
+isco3_sum<-setDT(isco3_sum, keep.rownames = T)
+names(isco3_sum)<-c("isco3","ever")
+isco3_sum$exclude<-ifelse(isco3_sum$ever<5,1,0)
+table(isco3_sum$exclude) #23 excluded jobs here 
+table(isco3_sum$isco3[isco3_sum$exclude>0])
+
+excl.var<-isco3_sum$isco3[isco3_sum$exclude>0]
+all.subjects<-all.subjects[,-which(names(all.subjects) %in% excl.var)] #1638 variables left
+
+save(all.subjects,file=paste0(output.path,"all.subjects.ever2.Rdata")) 
+```
+
+
+```{r Check to see if any jobs fall in all cases/controls, if so remove}
+
+#some changes to first jobs:
+which(colnames(all.subjects)=="isco3_11_ever") #23, this is the first 3d job
+which(colnames(all.subjects)=="isco3_999_ever") #326
+which(colnames(all.subjects)=="isco_1100_ever") #327, this is the first 5d job
+which(colnames(all.subjects)=="isco_99910_ever") #1368
+
+cases<-all.subjects[all.subjects$status==1,]
+controls<-all.subjects[all.subjects$status==0,]
+
+#controls at 5d
+
+sum_isco5_cases<-colSums(cases[,c(which(colnames(cases)=="isco_1100_ever"):
+                                which(colnames(cases)=="isco_99910_ever"))])
+sum_isco5_cases<-as.data.frame(sum_isco5_cases)
+sum_isco5_cases<-setDT(sum_isco5_cases, keep.rownames = T)
+names(sum_isco5_cases)<-c("isco","ever")
+sum_isco5_cases$exclude<-ifelse(sum_isco5_cases$ever==0,1,0) #if there are zero ever cases, then they are all controls
+table(sum_isco5_cases$exclude) #  18 here
+table(sum_isco5_cases$isco[sum_isco5_cases$exclude>0]) #isco_13930_ever isco_17135_ever  isco_2600_ever  isco_2720_ever  isco_2790_ever  isco_3200_ever isco_3400_ever isco_44000_ever  isco_5230_ever  isco_5390_ever  isco_5400_ever isco_59190_ever isco_63240_ever  isco_7310_ever isco_75445_ever isco_79930_ever isco_81240_ever isco_89160_ever 
+
+#cases at 5d 
+
+sum_isco5_cons<-colSums(controls[,c(which(colnames(controls)=="isco_1100_ever"):
+                                which(colnames(controls)=="isco_99910_ever"))])
+sum_isco5_cons<-as.data.frame(sum_isco5_cons)
+sum_isco5_cons<-setDT(sum_isco5_cons, keep.rownames = T)
+names(sum_isco5_cons)<-c("isco","ever")
+sum_isco5_cons$exclude<-ifelse(sum_isco5_cons$ever==0,1,0) #if there are zero ever controls, then they are all cases
+table(sum_isco5_cons$exclude) # 6 jobs here
+table(sum_isco5_cons$isco[sum_isco5_cons$exclude>0]) #isco_32190_ever isco_74925_ever isco_78170_ever isco_79920_ever isco_95600_ever isco_98630_ever
+
+#controls at 3d
+
+sum_isco3_cases<-colSums(cases[,c(which(colnames(cases)=="isco3_11_ever"):
+                                which(colnames(cases)=="isco3_999_ever"))])
+sum_isco3_cases<-as.data.frame(sum_isco3_cases)
+sum_isco3_cases<-setDT(sum_isco3_cases, keep.rownames = T)
+names(sum_isco3_cases)<-c("isco","ever")
+sum_isco3_cases$exclude<-ifelse(sum_isco3_cases$ever==0,1,0) #if there are zero ever cases, then they are all controls
+table(sum_isco3_cases$exclude) #  1 here
+table(sum_isco3_cases$isco[sum_isco3_cases$exclude>0]) #isco3_440_ever
+
+#cases at 3d 
+
+sum_isco3_cons<-colSums(controls[,c(which(colnames(controls)=="isco3_11_ever"):
+                                which(colnames(controls)=="isco3_999_ever"))])
+sum_isco3_cons<-as.data.frame(sum_isco3_cons)
+sum_isco3_cons<-setDT(sum_isco3_cons, keep.rownames = T)
+names(sum_isco3_cons)<-c("isco","ever")
+sum_isco3_cons$exclude<-ifelse(sum_isco3_cons$ever==0,1,0) #if there are zero ever controls, then they are all cases
+table(sum_isco3_cons$exclude) # 0 jobs here
+
+excl.var<-sum_isco5_cases$isco[sum_isco5_cases$exclude>0]
+all.subjects<-all.subjects[,-which(names(all.subjects) %in% excl.var)] #1620 variables left
+
+excl.var<-sum_isco5_cons$isco[sum_isco5_cons$exclude>0]
+all.subjects<-all.subjects[,-which(names(all.subjects) %in% excl.var)] #1614 variables left
+
+excl.var<-sum_isco3_cases$isco[sum_isco3_cases$exclude>0]
+all.subjects<-all.subjects[,-which(names(all.subjects) %in% excl.var)] #1613 variables left
+
+save(all.subjects,file=paste0(output.path,"all.subjects.ever3.Rdata")) 
+
+```
+
+```{r removing all teacher jobs so they become ref group}
+
+which(colnames(all.subjects)=="isco3_11_ever") #23, this is the first 3d job
+which(colnames(all.subjects)=="isco3_999_ever") #325, so 325-23=302 3d jobs left
+which(colnames(all.subjects)=="isco_1100_ever") #326, this is the first 5d job
+which(colnames(all.subjects)=="isco_99910_ever") #1613, so 1613-326= 1287 5d jobs left
+
+#if all teacher jobs are removed, career ever teachers would become "jobless" (i.e. 0s for all job variables), becoming reference group
+
+#3d: 131:139
+#5d: 13120	13125	13130	13140	13145	13150	13155	13160	13165	13170	13175	13180	13190	13215	13220	13230	13240	13250	13260	13270	13275	13280	13290	13320	13390	13420	13490	13520	13530	13540	13590	13920	13930	13940	13950	13990
+
+teach3d<-c(131:139)
+teach3d<-as.character(teach3d)
+teach3d<-paste("isco3",teach3d,"ever",sep = "_")
+
+teach5d<-c(13120, 13125,	13130,	13140,	13145,	13150,	13155,	13160,	13165,	13170,	13175,	13180,	13190,	13215,	13220,	13230,	13240,	13250,	13260,	13270,	13275,	13280,	13290,	13320,	13390,	13420,	13490,	13520,	13530,	13540,	13590,	13920,	13930,	13940,	13950,	13990)
+teach5d<-as.character(teach5d)
+teach5d<-paste("isco",teach5d,"ever",sep = "_")
+
+all.subjects$tot_jobs3<-rowSums(all.subjects[,c(which(colnames(all.subjects)=="isco3_11_ever"):which(colnames(all.subjects)=="isco3_999_ever"))])
+table(all.subjects$tot_jobs3) #4 jobless, these are people with jobs that are now removed due to n<5 for the job
+
+all.subjects$tot_jobs5<-rowSums(all.subjects[,c(which(colnames(all.subjects)=="isco_1100_ever"):which(colnames(all.subjects)=="isco_99910_ever"))])
+table(all.subjects$tot_jobs5) #93 jobless, these are people with jobs that are now removed due to n<5 for the job
+
+all.subjects<-all.subjects[,-which(names(all.subjects) %in% teach3d)] #1607 variables left (only 6/9 removed, other 3 prob removed earlier)
+
+all.subjects<-all.subjects[,-which(names(all.subjects) %in% teach5d)]  #1574 variables left (33/36 removed, other 3 prob removed earlier)
+
+all.subjects$tot_jobs3<-rowSums(all.subjects[,c(which(colnames(all.subjects)=="isco3_11_ever"):which(colnames(all.subjects)=="isco3_999_ever"))])
+table(all.subjects$tot_jobs3) #now 661 jobless, these are 4 people with jobs that are now removed due to n<5 for the job, plus 657 career teachers with jobs removed
+
+all.subjects$tot_jobs5<-rowSums(all.subjects[,c(which(colnames(all.subjects)=="isco_1100_ever"):which(colnames(all.subjects)=="isco_99910_ever"))])
+table(all.subjects$tot_jobs5) #now 674 jobless, these are 93 people with jobs that are now removed due to n<5 for the job, plus 581 career teachers with jobs removed
+
+all.subjects$tot_jobs3<-NULL
+all.subjects$tot_jobs5<-NULL
+
+head(names(all.subjects),22)
+all.subjects<-all.subjects[,c(1,2,4,9,11,16,18,23:1574)] #taking all important cov + jobs, 1559 var left
+
+save(all.subjects,file=paste0(output.path,"all.subjects.ever4.Rdata")) 
+
+```
+
+```{r left out exposures, taking from longest job file }
+load(file=paste0(output.path,"all.subjects.ever.Rdata")) 
+
+all.subjects.exp<-all.subjects[,c("subjctid",
+                                "asbestos_cum0",
+                                "chromium_cum0",
+                                "diesel_cum0",
+                                "nickel_cum0",
+                                "pah_cum0",
+                                "silica_cum0")]
+
+load(file=paste0(output.path,"all.subjects.ever4.Rdata"))
+
+
+all.subjects<-merge(all.subjects,all.subjects.exp,all.x = T)
+
+anyNA(all.subjects$silica_cum0)
+
+levels(all.subjects$study_name)<-1:20
+table(all.subjects$study_name)
+
+
+
+
+for(i in c(which(colnames(all.subjects)=="isco3_11_ever"):which(colnames(all.subjects)=="isco_99910_ever"))){
+  all.subjects[,i]<-as.factor(all.subjects[,i]) 
+}
+
+all.subjects$sex<-as.factor(all.subjects$sex)
+
+all.subjects$status<-as.factor(all.subjects$status)
+
+tail(names(all.subjects),10)
+all.subjects<-all.subjects[,c(1:7,1560:1565,8:1559)]
+tail(names(all.subjects),10)
+
+save(all.subjects,file=paste0(output.path,"all.subjects.ever5.Rdata")) 
+```
+
+```{r create another dataset for all jobs with teachers included}
+
+load(file=paste0(output.path,"all.subjects.ever.Rdata")) 
+
+all.subjects.exp<-all.subjects[,c("subjctid",
+                                "asbestos_cum0",
+                                "chromium_cum0",
+                                "diesel_cum0",
+                                "nickel_cum0",
+                                "pah_cum0",
+                                "silica_cum0")]
+
+load(file=paste0(output.path,"all.subjects.ever3.Rdata")) 
+
+which(colnames(all.subjects)=="isco3_133_ever") #82, teachers still here
+
+all.subjects<-merge(all.subjects,all.subjects.exp,all.x = T)
+
+anyNA(all.subjects$silica_cum0)
+
+levels(all.subjects$study_name)<-1:20
+table(all.subjects$study_name)
+
+
+
+for(i in c(which(colnames(all.subjects)=="isco3_11_ever"):which(colnames(all.subjects)=="isco_99910_ever"))){
+  all.subjects[,i]<-as.factor(all.subjects[,i]) 
+}
+
+all.subjects$sex<-as.factor(all.subjects$sex)
+
+all.subjects$status<-as.factor(all.subjects$status)
+
+anyNA(all.subjects)
+
+head(names(all.subjects),22)
+all.subjects<-all.subjects[,c(1,2,4,9,11,16,18,23:1619)]
+head(names(all.subjects),15)
+
+anyNA(all.subjects)
+
+tail(names(all.subjects))
+
+all.subjects<-all.subjects[,c(1:7,1599:1604,8:1598)]
+
+tail(names(all.subjects))
+
+save(all.subjects,file=paste0(output.path,"all.subjects.ever6.Rdata")) 
+```
+
+
+```{r sample Penalization model 1,include=F}
+
+load(file=paste0(output.path,"all.subjects.ever5.Rdata")) #ever job dataset, with teachers as ref
+
+which(colnames(all.subjects)=="isco3_11_ever") #14, this is the first 3d job
+which(colnames(all.subjects)=="isco3_999_ever") #310
+which(colnames(all.subjects)=="isco_1100_ever") #311, this is the first 5d job
+which(colnames(all.subjects)=="isco_99910_ever") #1565
+
+x<-all.subjects[,-c(4,which(colnames(all.subjects)=="isco_1100_ever"):which(colnames(all.subjects)=="isco_99910_ever"))]
+tail(names(x))
+
+x.mat<-as.matrix(x)
+y<-all.subjects[,"status"]
+
+####-teachers test run####
+
+table(y) #status - 16786  cases; 20818 controls
+head(names(x),25) #309 variables, 1:12 are non-penalized variables, rest ever employment in 3d isco68 occ
+
+set.seed(1234)
+
+pfac=rep(1,309)
+pfac[c(1:12)]=0
+
+dc.model1_3d <- stabsel(x = x.mat, y = y, fitfun = glmnet.lasso, args.fitfun = list(type = "conservative", penalty.factor = pfac, family = "binomial"), cutoff = 0.75, PFER = 10) 
+
+dc.model1_3d$selected
+
+model1_var<-c("status", names(dc.model1_3d$selected))
+model1.selected<-all.subjects[model1_var]
+selected.data<-model1.selected
+
+
+#stabs1<-glm(status~., data = selected.data, family = binomial) not sure why isn't working...memory error
+
+stabs1<- glm(status ~ 1 +
+ 
+factor(isco3_27_ever) + 
+factor(isco3_83_ever) + 
+factor(isco3_193_ever) + 
+factor(isco3_212_ever) + 
+factor(isco3_310_ever) + 
+factor(isco3_331_ever) + 
+factor(isco3_393_ever) + 
+factor(isco3_872_ever) + 
+factor(isco3_931_ever) + 
+factor(isco3_951_ever) + 
+factor(isco3_954_ever) + 
+  
+silica_cum0 +
+asbestos_cum0 +
+diesel_cum0 +
+nickel_cum0 +
+pah_cum0 +
+chromium_cum0 +
+  
+factor(study_name) + factor(agegroup)  + sex + packyrs + factor(time_quit) , data=selected.data, family=binomial)
+
+
+
+AIC(stabs1) 
+
+summary(stabs1)
+stabs1.or<-round(exp(cbind(summary(stabs1)$coefficients[2:12,1],confint(stabs1)[2:12,])),3)
+stabs1.or
+```
+
+```{r sample Penalization model 2,include=F}
+
+load(file=paste0(output.path,"all.subjects.ever6.Rdata")) #ever job dataset, full
+
+which(colnames(all.subjects)=="isco3_11_ever") #14, this is the first 3d job
+which(colnames(all.subjects)=="isco3_999_ever") #316
+which(colnames(all.subjects)=="isco_1100_ever") #317, this is the first 5d job
+which(colnames(all.subjects)=="isco_99910_ever") #1604
+
+x<-all.subjects[,-c(4,which(colnames(all.subjects)=="isco_1100_ever"):which(colnames(all.subjects)=="isco_99910_ever"))]
+tail(names(x))
+
+x.mat<-as.matrix(x)
+y<-all.subjects[,"status"]
+
+####full dataset test run####
+
+table(y) #status - 16786  cases; 20818 controls
+head(names(x),25) #315 variables, 1:12 are non-penalized variables, rest ever employment in 3d isco68 occ
+
+set.seed(1234)
+
+pfac=rep(1,315)
+pfac[c(1:12)]=0
+
+fdc.model1_3d <- stabsel(x = x.mat, y = y, fitfun = glmnet.lasso, args.fitfun = list(type = "conservative", penalty.factor = pfac, family = "binomial"), cutoff = 0.75, PFER = 10) 
+
+fdc.model1_3d$selected #pretty much the same as dataset w/o teachers, just welders missing from this set
+
+model2_var<-c("status", names(fdc.model1_3d$selected))
+model2.selected<-all.subjects[model2_var]
+selected.data<-model2.selected
+
+stabs2<- glm(status ~ 1 +
+ 
+factor(isco3_27_ever) + 
+factor(isco3_83_ever) + 
+factor(isco3_193_ever) + 
+factor(isco3_212_ever) + 
+factor(isco3_310_ever) + 
+factor(isco3_331_ever) + 
+factor(isco3_393_ever) + 
+factor(isco3_131_ever) + 
+factor(isco3_132_ever) + 
+factor(isco3_931_ever) + 
+factor(isco3_951_ever) + 
+factor(isco3_954_ever) + 
+  
+silica_cum0 +
+asbestos_cum0 +
+diesel_cum0 +
+nickel_cum0 +
+pah_cum0 +
+chromium_cum0 +
+  
+factor(study_name) + factor(agegroup)  + sex + packyrs + factor(time_quit) , data=selected.data, family=binomial)
+
+
+
+AIC(stabs2) 
+
+summary(stabs2)
+stabs2.or<-round(exp(cbind(summary(stabs2)$coefficients[2:13,1],confint(stabs2)[2:13,])),3)
+stabs2.or
+```
+
+
+```{r sample bayesian mixed model}
+
+load(file=paste0(output.path,"all.subjects.longestjob_3d5d.Rdata")) #longest 3/5d job dataset
+
+selected.data<-all.subjects
+
+names(selected.data)[2]<-"y" #status
+
+selected.data$packyrs<-scale(selected.data$packyrs, center = T, scale = T) 
+selected.data$asbestos_cum0<-scale(selected.data$asbestos_cum0, center = T, scale = T) 
+selected.data$chromium_cum0<-scale(selected.data$chromium_cum0, center = T, scale = T) 
+selected.data$diesel_cum0<-scale(selected.data$diesel_cum0, center = T, scale = T) 
+selected.data$nickel_cum0<-scale(selected.data$nickel_cum0, center = T, scale = T) 
+selected.data$pah_cum0<-scale(selected.data$pah_cum0, center = T, scale = T) 
+selected.data$silica_cum0<-scale(selected.data$silica_cum0, center = T, scale = T) 
+
+bayes_m4<-brm(y ~ agegroup + sex + study_name + packyrs + time_quit + asbestos_cum0 + chromium_cum0 + diesel_cum0 + nickel_cum0+ pah_cum0 + silica_cum0 + (1|longest_job3), data=selected.data, family=bernoulli, chains = 4, iter = 2000, warmup = 1000, cores = 4) #1064.67 seconds (Total)
+plot(bayes_m4) #traceplots and posterior densities 
+post4<-posterior_samples(bayes_m4, add_chain = TRUE)
+mcmc_acf(post4, pars = c("b_Intercept", "sd_longest_job3__Intercept"), lags = 10) 
+m4_random<-as.data.frame(ranef(bayes_m4))
+m4_random<-m4_random[order(-m4_random$longest_job3.Q2.5.Intercept),]
+head(m4_random,10)
+# save(bayes_m4,file=paste0(output.path,"bayes_m4.20210331.Rdata")) 
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
