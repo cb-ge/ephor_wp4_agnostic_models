@@ -1,9 +1,3 @@
----
-title: "Ephor_4.2.3_agnostic_models"
-author: "Calvin Ge"
-date: "18/02/2021"
-output: html_document
----
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -213,9 +207,9 @@ y<-as.factor(all.subjects.isco[,4])
 ```
 
 
-```{r 4-digit penalization model, include=FALSE}
+```{r 5-digit penalization model, include=FALSE}
 table(y) #status - 16901 cases; 20965 controls
-head(names(x),25) #1315 variables, 1:12 are "must have" variables, rest ever employment in 4d isco68 occ
+head(names(x),25) #1315 variables, 1:12 are "must have" variables, rest ever employment in 5d isco68 occ
 
 set.seed(1234)
 
@@ -261,96 +255,6 @@ table(all.subjects.isco[all.subjects.isco$isco_95410_dc==1,]$status) #
 table(all.subjects.isco[all.subjects.isco$isco_97155_dc==1,]$status) #
 ```
 
-```{r prep for Bayesian model, include=FALSE}
 
-load(file=paste0(output.path,"final.subjects.longest.job copy.Rdata")) # file with 3d duration and dc, plus longest held job and longest held years
 
-all.subjects.bayesian<-all.subjects.isco[c(1:16,661)] #core plus longest_job
-
-all.subjects.bayesian$A<-as.factor(all.subjects.bayesian$A)
-all.subjects.bayesian$A[is.na(all.subjects.bayesian$A)]<-0 #ran a check and all were non-jobs
-anyNA(all.subjects.bayesian)
-
-fixed.model<-glm(
-  status ~ factor(sex) + factor(study_name)  + packyrs + factor(time_quit) + factor(A) + factor(agegroup) + dme.cumexposure.lag0 + silica.cumexposure.lag0 + asbestos.cumexposure.lag0 + chromium.cumexposure.lag0 + nickel.cumexposure.lag0 + pah.cumexposure.lag0,
-  data = all.subjects.bayesian,
-  family = binomial
-)
-
-summary(fixed.model)
-
-#Testing combined exposure metric
-
-all.subjects.bayesian$combined.cumexposure<-all.subjects.bayesian$dme.cumexposure.lag0*fixed.model$coef["dme.cumexposure.lag0"] + all.subjects.bayesian$silica.cumexposure.lag0*fixed.model$coef["silica.cumexposure.lag0"] + all.subjects.bayesian$asbestos.cumexposure.lag0*fixed.model$coef["asbestos.cumexposure.lag0"]  + all.subjects.bayesian$chromium.cumexposure.lag0*fixed.model$coef["chromium.cumexposure.lag0"] + all.subjects.bayesian$nickel.cumexposure.lag0*fixed.model$coef["nickel.cumexposure.lag0"] +  all.subjects.bayesian$pah.cumexposure.lag0*fixed.model$coef["pah.cumexposure.lag0"] #making a combined exposure field weighted by beta
-
-fixed.model2<-glm(
-  status ~ factor(sex) + factor(study_name)  + packyrs + factor(time_quit) + factor(A) + factor(agegroup) + combined.cumexposure,
-  data = all.subjects.bayesian,
-  family = binomial
-)
-
-fixed.model2$coef["combined.cumexposure"] # it's 1.00000, kind of strange but quite close to combined beta from 6 exposures of 1.015291
-
-summary(fixed.model2)
-
-```
-
-##Bayesian hierarchical model
-
-```{r Bayesian hierarchical model tests, include=TRUE, message=FALSE}
-
-selected.data<-all.subjects.bayesian
-
-names(selected.data)[4]<-"y" #status
-selected.data$longest_job<-as.factor(selected.data$longest_job)
-
-if(FALSE){
-
-bayes_m1<-brm(y ~ combined.cumexposure + (1|longest_job), data=selected.data, family=bernoulli, chains = 2, iter = 1000, warmup = 500) #combined exposure is a weighted sum of all 6 exposures - weights applied are their respective betas obtained from logistic model with all fixed effects
-
-summary(bayes_m1)
-plot(bayes_m1) #traceplots and posterior densities 
-post<-posterior_samples(bayes_m1, add_chain = TRUE)
-mcmc_acf(post, pars = c("b_Intercept", "sd_longest_job__Intercept"), lags = 10) #autocorrelation
-m1_random<-as.data.frame(ranef(bayes_m1)) #random effect estimates
-m1_random<-m1_random[order(-m1_random$longest_job.Q2.5.Intercept),]
-head(m1_random,10)
-
-bayes_m2<-brm(y ~ combined.cumexposure + packyrs + (1|longest_job), data=selected.data, family=bernoulli, chains = 2, iter = 1000, warmup = 500) 
-plot(bayes_m2) #traceplots and posterior densities 
-post2<-posterior_samples(bayes_m2, add_chain = TRUE)
-mcmc_acf(post2, pars = c("b_Intercept", "sd_longest_job__Intercept"), lags = 10) 
-m2_random<-as.data.frame(ranef(bayes_m2))
-m2_random<-m2_random[order(-m2_random$longest_job.Q2.5.Intercept),]
-head(m2_random,10)
-
-bayes_m3<-brm(y ~ agegroup + sex + study_name + packyrs + combined.cumexposure + (1|longest_job), data=selected.data, family=bernoulli, chains = 2, iter = 1000, warmup = 500) 
-plot(bayes_m3) #traceplots and posterior densities 
-post3<-posterior_samples(bayes_m3, add_chain = TRUE)
-mcmc_acf(post3, pars = c("b_Intercept", "sd_longest_job__Intercept"), lags = 10) 
-m3_random<-as.data.frame(ranef(bayes_m3))
-m3_random<-m3_random[order(-m3_random$longest_job.Q2.5.Intercept),]
-head(m3_random,10)
-
-}## End(Not run - testing simpler models)
-
-bayes_m4<-brm(y ~ agegroup + sex + study_name + packyrs + time_quit + combined.cumexposure + (1|longest_job), data=selected.data, family=bernoulli, chains = 2, iter = 2000, warmup = 1000) 
-plot(bayes_m4) #traceplots and posterior densities 
-post4<-posterior_samples(bayes_m4, add_chain = TRUE)
-mcmc_acf(post4, pars = c("b_Intercept", "sd_longest_job__Intercept"), lags = 10) 
-m4_random<-as.data.frame(ranef(bayes_m4))
-m4_random<-m4_random[order(-m4_random$longest_job.Q2.5.Intercept),]
-head(m4_random,10)
-# save(bayes_m4,file=paste0(output.path,"bayes_m4.Rdata")) 
-```
-
-Thoughts? Possible to do this with ever employment? 
-
-```{r Frequentist mixed model, include=FALSE}
-
-isco_mixed<-glmer(y ~ agegroup + sex + study_name + packyrs + time_quit + combined.cumexposure + (1|longest_job),data=selected.data, family=binomial)
-freq_mixed<-REsim(isco_mixed) 
-plotREsim(freq_mixed) 
-
-```
 
